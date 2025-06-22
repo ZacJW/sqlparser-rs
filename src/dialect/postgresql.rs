@@ -28,6 +28,7 @@
 // limitations under the License.
 use log::debug;
 
+use crate::ast::Statement;
 use crate::dialect::{Dialect, Precedence};
 use crate::keywords::Keyword;
 use crate::parser::{Parser, ParserError};
@@ -258,4 +259,81 @@ impl Dialect for PostgreSqlDialect {
     fn supports_set_names(&self) -> bool {
         true
     }
+
+    fn parse_statement(
+        &self,
+        parser: &mut Parser,
+    ) -> Option<Result<crate::ast::Statement, ParserError>> {
+        if parser.parse_keywords(&[Keyword::CREATE, Keyword::PROCEDURE]) {
+            Some(parse_create_procedure(parser))
+        } else {
+            None
+        }
+    }
+}
+
+/// CREATE PROCEDURE
+/// <https://www.postgresql.org/docs/17/sql-createprocedure.html>
+fn parse_create_procedure(parser: &mut Parser) -> Result<Statement, ParserError> {
+    let name = parser.parse_object_name(false)?;
+
+    // TODO: This doesn't support PostgreSQL's VARIADIC argmode, nor is there support in crate::ast::ArgMode
+    let params = parser.parse_optional_procedure_parameters()?;
+
+    let mut language = None;
+
+    // TODO: Make room for this in the AST
+    let mut _transforms = vec![];
+
+    enum Security {
+        Invoker,
+        Definer,
+    }
+
+    let mut security = None;
+
+    loop {
+        if parser.parse_keyword(Keyword::LANGUAGE) {
+            if language.is_some() {
+                todo!("Return error for two LANGUAGE definitions")
+            }
+            language = Some(parser.parse_identifier()?);
+        } else if parser.parse_keyword(Keyword::TRANSFORM) {
+            loop {
+                parser.expect_keywords(&[Keyword::FOR, Keyword::TYPE])?;
+                _transforms.push(parser.parse_object_name(false)?);
+                if !parser.consume_token(&Token::Comma) {
+                    break
+                }
+            }
+        } else if parser.parse_keywords(&[Keyword::EXTERNAL, Keyword::SECURITY])
+            || parser.parse_keyword(Keyword::SECURITY)
+        {
+            if security.is_some() {
+                todo!("Return error for two SECURITY definitions")
+            }
+            if parser.parse_keyword(Keyword::INVOKER) {
+                security = Some(Security::Invoker)
+            } else if parser.parse_keyword(Keyword::DEFINER) {
+                security = Some(Security::Definer)
+            } else {
+                todo!("Return error for unknown SECURITY type")
+            }
+        } else if parser.parse_keyword(Keyword::SET) {
+        } else {
+            break;
+        }
+    }
+
+    parser.expect_keyword_is(Keyword::AS)?;
+
+    let body = parser.parse_conditional_statements(&[Keyword::END])?;
+
+    Ok(Statement::CreateProcedure {
+        name,
+        or_alter: false,
+        params,
+        language,
+        body,
+    })
 }

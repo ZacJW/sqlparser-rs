@@ -922,6 +922,7 @@ define_keywords!(
     TRACE,
     TRAILING,
     TRANSACTION,
+    TRANSFORM,
     TRANSIENT,
     TRANSLATE,
     TRANSLATE_REGEX,
